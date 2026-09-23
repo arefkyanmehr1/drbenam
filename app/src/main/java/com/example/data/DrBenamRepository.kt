@@ -859,81 +859,62 @@ object DrBenamRepository {
   suspend fun sendOtpOnline(mobile: String): Pair<Boolean, String> = requestOtpOnline(mobile)
 
   suspend fun requestOtpOnline(mobile: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-    activeMobileNumber = mobile
-    try {
-      val csrf = if (cachedCsrfToken.isNotEmpty()) cachedCsrfToken else fetchLoginPageCsrf()
-
-      val formBody = FormBody.Builder()
-        .add("csrf_token", csrf)
-        .add("action", "send_otp")
-        .add("mobile", mobile)
-        .add("remember", "1")
-        .build()
-
-      val postReq = Request.Builder()
-        .url("$BASE_URL/login")
-        .post(formBody)
-        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) DrBenamApp/1.0")
-        .build()
-
-      val postResp = httpClient.newCall(postReq).execute()
-      val postHtml = postResp.body?.string() ?: ""
-
-      // Generate verification code and dispatch real SMS notification
-      val code = (100000 + Random.nextInt(900000)).toString()
-      _activeOtpCode.value = code
-
-      val smsMsg = "مطب دکتر ابراهیم بنام:\nکد تأیید ورود شما: ${PersianFormatter.toPersianDigits(code)}\nاعتبار: ۲ دقیقه"
-      dispatchSmsNotification(
-        message = smsMsg,
-        code = code
-      )
-
-      Pair(true, "کد تأیید با موفقیت به شماره ${PersianFormatter.toPersianDigits(mobile)} پیامک شد.")
-    } catch (e: Exception) {
-      val code = (100000 + Random.nextInt(900000)).toString()
-      _activeOtpCode.value = code
-      val smsMsg = "مطب دکتر ابراهیم بنام:\nکد تأیید ورود شما: ${PersianFormatter.toPersianDigits(code)}\nاعتبار: ۲ دقیقه"
-      dispatchSmsNotification(
-        message = smsMsg,
-        code = code
-      )
-      Pair(true, "کد تأیید برای ${PersianFormatter.toPersianDigits(mobile)} ارسال گردید.")
+    activeMobileNumber = mobile.trim()
+    val response = callServerApi(
+      "send_otp",
+      mapOf("mobile" to activeMobileNumber)
+    )
+    if (response) {
+      Pair(true, "کد تأیید به شماره شما ارسال شد.")
+    } else {
+      Pair(false, "ارسال کد تأیید ناموفق بود.")
     }
   }
 
   suspend fun verifyOtpOnline(otp: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-    try {
-      val formBody = FormBody.Builder()
-        .add("csrf_token", cachedCsrfToken)
-        .add("action", "verify_otp")
-        .add("otp", otp)
-        .build()
-
-      val postReq = Request.Builder()
-        .url("$BASE_URL/login")
-        .post(formBody)
-        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) DrBenamApp/1.0")
-        .build()
-
-      val postResp = httpClient.newCall(postReq).execute()
-      val valid = otp == _activeOtpCode.value || otp.length == 6
-      if (valid) {
-        _isLoggedIn.value = true
+    if (activeMobileNumber.isBlank()) return@withContext Pair(false, "شماره موبایل مشخص نیست.")
+    val response = callServerApiWithResponse(
+      "verify_otp",
+      mapOf("mobile" to activeMobileNumber, "otp" to otp.trim())
+    )
+    if (response.optBoolean("ok")) {
+      _isLoggedIn.value = true
+      response.optJSONObject("user")?.let { user ->
         _userProfile.value = _userProfile.value.copy(
-          phone = activeMobileNumber.ifEmpty { _userProfile.value.phone }
+          id = user.optInt("id"),
+          name = user.optString("name"),
+          firstName = user.optString("first_name"),
+          lastName = user.optString("last_name"),
+          phone = user.optString("phone", activeMobileNumber),
+          email = user.optString("email"),
+          nationalId = user.optString("national_id"),
+          birthDate = user.optString("birth_date"),
+          gender = user.optString("gender"),
+          avatar = user.optString("avatar").ifBlank { null },
+          createdAt = user.optString("created_at"),
+          lastLogin = user.optString("last_login")
         )
-        Pair(true, "ورود با موفقیت انجام شد.")
-      } else {
-        Pair(false, "کد تأیید وارد شده نامعتبر یا منقضی است.")
+      }
+      syncWithServerApi()
+    }
+    Pair(response.optBoolean("ok"), response.optString("message", "کد تأیید نامعتبر است."))
+  }
+
+  private suspend fun callServerApiWithResponse(action: String, params: Map<String, String>): JSONObject = withContext(Dispatchers.IO) {
+    try {
+      val builder = FormBody.Builder().add("action", action)
+      params.forEach { (key, value) -> builder.add(key, value) }
+      httpClient.newCall(
+        Request.Builder().url(API_URL).post(builder.build())
+          .header("Accept", "application/json")
+          .header("User-Agent", "DrBenamAndroidApp/2.0")
+          .build()
+      ).execute().use { response ->
+        JSONObject(response.body?.string().orEmpty().ifBlank { "{}" })
       }
     } catch (e: Exception) {
-      if (otp == _activeOtpCode.value || otp.length == 6) {
-        _isLoggedIn.value = true
-        Pair(true, "ورود با موفقیت انجام شد.")
-      } else {
-        Pair(false, "کد تأیید نامعتبر است.")
-      }
+      Log.e("DrBenamApi", "API $action failed", e)
+      JSONObject().put("ok", false).put("message", "ارتباط با سرور برقرار نشد.")
     }
   }
 
@@ -950,9 +931,9 @@ object DrBenamRepository {
         .build()
 
       val resp = httpClient.newCall(req).execute()
-      val ok = resp.isSuccessful
+      val body = resp.body?.string().orEmpty()
       resp.close()
-      ok
+      runCatching { JSONObject(body).optBoolean("ok") }.getOrDefault(false)
     } catch (e: Exception) {
       Log.d("DrBenamApi", "Offline or API endpoint not yet placed on server: ${e.message}")
       false
