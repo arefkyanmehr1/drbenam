@@ -41,6 +41,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.AppointmentItem
+import com.example.data.AvailableSlot
 import com.example.data.ClinicItem
 import com.example.data.DrBenamRepository
 import com.example.data.MedicalService
@@ -78,16 +80,27 @@ fun AppointmentBookingScreen(
   val scope = rememberCoroutineScope()
   val services by DrBenamRepository.services.collectAsState()
   val clinics by DrBenamRepository.clinics.collectAsState()
+  val availableSlots by DrBenamRepository.availableSlots.collectAsState()
 
   var currentStep by remember { mutableIntStateOf(1) } // 1: Service, 2: Clinic, 3: DateTime, 4: Invoice, 5: Payment
   var selectedService by remember { mutableStateOf<MedicalService?>(services.firstOrNull()) }
-  var selectedClinic by remember { mutableStateOf<ClinicItem?>(clinics.firstOrNull()) }
+  var selectedClinic by remember { mutableStateOf<ClinicItem?>(null) }
+  var selectedSlot by remember { mutableStateOf<AvailableSlot?>(null) }
+  var selectedDate by remember { mutableStateOf("") }
 
-  val availableDays = listOf("شنبه ۲۸ مهر", "یک‌شنبه ۲۹ مهر", "دوشنبه ۳۰ مهر", "سه‌شنبه ۱ آبان", "چهارشنبه ۲ آبان")
-  var selectedDate by remember { mutableStateOf(availableDays.first()) }
-
-  val availableHours = listOf("۱۶:۰۰", "۱۶:۳۰", "۱۷:۰۰", "۱۷:۳۰", "۱۸:۰۰", "۱۸:۳۰", "۱۹:۰۰", "۱۹:۳۰")
-  var selectedTime by remember { mutableStateOf(availableHours[2]) }
+  LaunchedEffect(clinics) {
+    if (selectedClinic == null) selectedClinic = clinics.firstOrNull()
+  }
+  LaunchedEffect(selectedClinic, availableSlots) {
+    val first = availableSlots.firstOrNull { selectedClinic?.id == it.clinicId }
+    if (selectedDate.isBlank() || availableSlots.none { it.clinicId == selectedClinic?.id && it.date == selectedDate }) {
+      selectedDate = first?.date.orEmpty()
+    }
+    if (selectedSlot == null || selectedSlot?.let { s -> availableSlots.none { it.id == s.id } } == true ||
+        selectedSlot?.clinicId != selectedClinic?.id || selectedSlot?.date != selectedDate) {
+      selectedSlot = availableSlots.firstOrNull { it.clinicId == selectedClinic?.id && it.date == selectedDate }
+    }
+  }
 
   var paymentChoice by remember { mutableStateOf("full") } // "full" or "deposit"
   var confirmedAppointment by remember { mutableStateOf<AppointmentItem?>(null) }
@@ -303,113 +316,99 @@ fun AppointmentBookingScreen(
           }
 
           3 -> {
+            val clinicSlots = availableSlots.filter { it.clinicId == selectedClinic?.id }
+            val dates = clinicSlots.map { it.date }.distinct()
+            val times = clinicSlots.filter { it.date == selectedDate }
+
             Text("مرحله ۳: انتخاب تاریخ و ساعت ویزیت", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text("روزهای دارای ظرفیت خالی پزشک را انتخاب نمایید.", fontSize = 12.sp, color = Color(0xFF64748B))
+            Text("تاریخ و ساعت فقط از سانس‌های واقعی موجود در دیتابیس سایت نمایش داده می‌شوند.", fontSize = 12.sp, color = Color(0xFF64748B))
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            Text("۱. روزهای موجود در تقویم:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-              horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-              availableDays.forEach { day ->
-                val isSelected = selectedDate == day
-                Card(
-                  modifier = Modifier
-                    .clickable { selectedDate = day }
-                    .border(
-                      width = if (isSelected) 2.dp else 1.dp,
-                      color = if (isSelected) DrBenamPrimary else Color(0xFFE2E8F0),
-                      shape = RoundedCornerShape(12.dp)
-                    ),
-                  shape = RoundedCornerShape(12.dp),
-                  colors = CardDefaults.cardColors(containerColor = if (isSelected) DrBenamPrimarySoft else Color.White)
-                ) {
-                  Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                      Icons.Default.CalendarMonth,
-                      contentDescription = null,
-                      tint = if (isSelected) DrBenamPrimaryDark else Color(0xFF64748B),
-                      modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                      PersianFormatter.toPersianDigits(day),
-                      fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                      color = if (isSelected) DrBenamPrimaryDark else Color(0xFF0F172A),
-                      fontSize = 12.sp
-                    )
+            if (clinicSlots.isEmpty()) {
+              Text("در حال حاضر هیچ سانس آزادی برای این مطب در دیتابیس سایت وجود ندارد.", color = Color(0xFFDC2626), fontSize = 12.sp)
+            } else {
+              Text("۱. تاریخ‌های دارای ظرفیت:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+              Spacer(modifier = Modifier.height(8.dp))
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                dates.forEach { date ->
+                  val isSelected = selectedDate == date
+                  Card(
+                    modifier = Modifier
+                      .clickable {
+                        selectedDate = date
+                        selectedSlot = clinicSlots.firstOrNull { it.date == date }
+                      }
+                      .border(
+                        width = if (isSelected) 2.dp else 1.dp,
+                        color = if (isSelected) DrBenamPrimary else Color(0xFFE2E8F0),
+                        shape = RoundedCornerShape(12.dp)
+                      ),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = if (isSelected) DrBenamPrimarySoft else Color.White)
+                  ) {
+                    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                      Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = if (isSelected) DrBenamPrimaryDark else Color(0xFF64748B), modifier = Modifier.size(16.dp))
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text(PersianFormatter.toPersianDigits(date), fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, color = if (isSelected) DrBenamPrimaryDark else Color(0xFF0F172A), fontSize = 12.sp)
+                    }
                   }
                 }
               }
-            }
 
-            Spacer(modifier = Modifier.height(18.dp))
-
-            Text("۲. ساعت‌های نوبت‌دهی (سانس‌های فعال):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-              horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-              availableHours.forEach { time ->
-                val isSelected = selectedTime == time
-                Card(
-                  modifier = Modifier
-                    .clickable { selectedTime = time }
-                    .border(
-                      width = if (isSelected) 2.dp else 1.dp,
-                      color = if (isSelected) DrBenamPrimary else Color(0xFFE2E8F0),
-                      shape = RoundedCornerShape(12.dp)
-                    ),
-                  shape = RoundedCornerShape(12.dp),
-                  colors = CardDefaults.cardColors(containerColor = if (isSelected) DrBenamPrimarySoft else Color.White)
-                ) {
-                  Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                      Icons.Default.AccessTime,
-                      contentDescription = null,
-                      tint = if (isSelected) DrBenamPrimaryDark else Color(0xFF64748B),
-                      modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                      PersianFormatter.formatTime(time),
-                      fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                      color = if (isSelected) DrBenamPrimaryDark else Color(0xFF0F172A),
-                      fontSize = 13.sp
-                    )
+              Spacer(modifier = Modifier.height(18.dp))
+              Text("۲. سانس‌های آزاد همان تاریخ:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+              Spacer(modifier = Modifier.height(8.dp))
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                times.forEach { slot ->
+                  val isSelected = selectedSlot?.id == slot.id
+                  Card(
+                    modifier = Modifier
+                      .clickable { selectedSlot = slot }
+                      .border(
+                        width = if (isSelected) 2.dp else 1.dp,
+                        color = if (isSelected) DrBenamPrimary else Color(0xFFE2E8F0),
+                        shape = RoundedCornerShape(12.dp)
+                      ),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = if (isSelected) DrBenamPrimarySoft else Color.White)
+                  ) {
+                    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                      Icon(Icons.Default.AccessTime, contentDescription = null, tint = if (isSelected) DrBenamPrimaryDark else Color(0xFF64748B), modifier = Modifier.size(16.dp))
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text(PersianFormatter.formatTime(slot.startTime), fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, color = if (isSelected) DrBenamPrimaryDark else Color(0xFF0F172A), fontSize = 13.sp)
+                    }
                   }
                 }
               }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-              OutlinedButton(
-                onClick = { currentStep = 2 },
-                modifier = Modifier.weight(1f).height(48.dp),
-                shape = RoundedCornerShape(12.dp)
-              ) {
+              OutlinedButton(onClick = { currentStep = 2 }, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(12.dp)) {
                 Text("مرحله قبل")
               }
               Button(
                 onClick = { currentStep = 4 },
                 modifier = Modifier.weight(2f).height(48.dp),
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = DrBenamPrimary)
+                colors = ButtonDefaults.buttonColors(containerColor = DrBenamPrimary),
+                enabled = selectedSlot != null
               ) {
-                Text("مشاهده پیش‌فاکتور ←", fontWeight = FontWeight.Bold)
+                Text("مشاهده جزئیات ←", fontWeight = FontWeight.Bold)
               }
             }
           }
 
           4 -> {
             Text("مرحله ۴: پیش‌فاکتور و شیوه پرداخت", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text("جزئیات نوبت و انتخاب شیوه پرداخت آنلاین بیعانه یا تسویه کامل", fontSize = 12.sp, color = Color(0xFF64748B))
+            Text("جزئیات نوبت بر اساس اطلاعات واقعی دیتابیس سایت.", fontSize = 12.sp, color = Color(0xFF64748B))
 
             Spacer(modifier = Modifier.height(14.dp))
 
@@ -425,7 +424,7 @@ fun AppointmentBookingScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 InvoiceRow("محل مراجعه:", selectedClinic?.name ?: "-")
                 Spacer(modifier = Modifier.height(8.dp))
-                InvoiceRow("تاریخ و ساعت:", "${PersianFormatter.toPersianDigits(selectedDate)} ساعت ${PersianFormatter.formatTime(selectedTime)}")
+                InvoiceRow("تاریخ و ساعت:", "${PersianFormatter.toPersianDigits(selectedSlot?.date.orEmpty())} ساعت ${PersianFormatter.formatTime(selectedSlot?.startTime.orEmpty())}")
                 Spacer(modifier = Modifier.height(8.dp))
                 InvoiceRow("مبلغ کل خدمت:", PersianFormatter.formatPrice(selectedService?.price ?: 0))
 
@@ -485,7 +484,7 @@ fun AppointmentBookingScreen(
           }
 
           5 -> {
-            Text("مرحله ۵: درگاه پرداخت الکترونیک شاپرک", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            Text("مرحله ۵: ثبت درخواست نوبت", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
 
             val payableAmount = if (paymentChoice == "deposit") selectedService?.depositPrice ?: 0 else selectedService?.price ?: 0
 
@@ -512,8 +511,8 @@ fun AppointmentBookingScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Text("شبکه الکترونیکی پرداخت کارت (شاپرک)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text("پذیرنده: مطب تخصصی قلب و عروق دکتر ابراهیم بنام", fontSize = 12.sp, color = Color(0xFF64748B))
+                Text("ثبت نوبت در سامانه مطب", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("پرداخت اینترنتی فقط پس از اتصال درگاه واقعی انجام می‌شود.", fontSize = 12.sp, color = Color(0xFF64748B))
 
                 Spacer(modifier = Modifier.height(14.dp))
 
@@ -540,29 +539,28 @@ fun AppointmentBookingScreen(
                       loadingProgress = 0.25f
                       delay(800)
 
-                      loadingStatus = "تأیید رسید تراکنش و صدور شماره پیگیری..."
-                      loadingProgress = 0.60f
-                      delay(800)
-
-                      loadingStatus = "ثبت قطعی نوبت در دیتابیس مطب و ارسال پیامک..."
-                      loadingProgress = 0.90f
-                      val newAppt = DrBenamRepository.bookAppointment(
+                      loadingStatus = "ثبت زمان انتخاب‌شده در دیتابیس مطب..."
+                      loadingProgress = 0.80f
+                      val result = DrBenamRepository.bookAppointment(
                         service = selectedService!!,
                         clinic = selectedClinic!!,
-                        date = selectedDate,
-                        time = selectedTime,
+                        slot = selectedSlot!!,
                         payChoice = paymentChoice
                       )
-                      delay(700)
                       showLoadingDialog = false
-                      confirmedAppointment = newAppt
+                      if (result.first != null) {
+                        confirmedAppointment = result.first
+                      }
+                      if (result.second.isNotBlank() && result.first == null) {
+                        currentStep = 3
+                      }
                     }
                   },
                   modifier = Modifier.fillMaxWidth().height(48.dp).testTag("confirm_booking_button"),
                   shape = RoundedCornerShape(12.dp),
                   colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
                 ) {
-                  Text("پرداخت و ثبت نوبت (ارسال پیامک تأیید)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                  Text("ثبت درخواست نوبت", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
