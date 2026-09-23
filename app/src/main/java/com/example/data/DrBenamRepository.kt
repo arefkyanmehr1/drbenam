@@ -72,25 +72,25 @@ object DrBenamRepository {
   val allSmsMessages: StateFlow<List<IncomingSms>> = _allSmsMessages.asStateFlow()
 
   private var cachedCsrfToken: String = ""
-  private var activeMobileNumber: String = "09935179549"
+  private var activeMobileNumber: String = ""
   private val _activeOtpCode = MutableStateFlow<String?>(null)
   val activeOtpCode: StateFlow<String?> = _activeOtpCode.asStateFlow()
 
   // Database-backed StateFlows (Default values from drbena_drbenam MySQL dump)
   private val _userProfile = MutableStateFlow(
     UserProfile(
-      id = 15,
-      name = "عارف کیانمهر",
-      firstName = "عارف",
-      lastName = "کیانمهر",
-      phone = "09935179549",
-      email = "patient@drbenam.com",
-      nationalId = "6000123269",
-      birthDate = "1372/06/15",
-      gender = "male",
+      id = 0,
+      name = "",
+      firstName = "",
+      lastName = "",
+      phone = "",
+      email = "",
+      nationalId = "",
+      birthDate = "",
+      gender = "",
       avatar = null,
-      createdAt = "1405/06/10",
-      lastLogin = "امروز ساعت ۱۰:۱۵"
+      createdAt = "",
+      lastLogin = ""
     )
   )
   val userProfile: StateFlow<UserProfile> = _userProfile.asStateFlow()
@@ -110,7 +110,7 @@ object DrBenamRepository {
   private val _walletTransactions = MutableStateFlow<List<WalletTx>>(emptyList())
   val walletTransactions: StateFlow<List<WalletTx>> = _walletTransactions.asStateFlow()
 
-  private val _walletBalance = MutableStateFlow(359300L)
+  private val _walletBalance = MutableStateFlow(0L)
   val walletBalance: StateFlow<Long> = _walletBalance.asStateFlow()
 
   private val _notifications = MutableStateFlow<List<NotificationMessage>>(emptyList())
