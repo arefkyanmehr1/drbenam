@@ -1,0 +1,6 @@
+{
+  "name": "DrBenam",
+  "description": "سامانه نوبت‌دهی و پرونده الکترونیک سلامت مطب دکتر ابراهیم بنام",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
