@@ -286,20 +286,18 @@ fun AppointmentsListScreen(
                 loadingProgress = 0.35f
                 delay(800)
 
-                loadingStatus = "واریز وجه بیعانه به کیف پول کاربری شما..."
+                loadingStatus = "ثبت لغو و آزادسازی زمان در دیتابیس سایت..."
                 loadingProgress = 0.70f
                 delay(800)
 
                 loadingStatus = "ارسال پیامک لغو به شماره بیمار..."
                 loadingProgress = 0.95f
-                DrBenamRepository.cancelAppointment(apptId, finalReason)
-                delay(600)
+                val result = DrBenamRepository.cancelAppointment(apptId, finalReason)
                 showLoadingDialog = false
-
                 resultDialogState = Triple(
-                  true,
-                  "نوبت با موفقیت لغو شد",
-                  "نوبت با کد پیگیری ${PersianFormatter.toPersianDigits(tracking)} لغو گردید. مبلغ بیعانه به کیف پول حساب شما منظور شد و پیامک تأیید برایتان ارسال گردید."
+                  result.first,
+                  if (result.first) "نوبت لغو شد" else "لغو انجام نشد",
+                  result.second
                 )
               }
             },
