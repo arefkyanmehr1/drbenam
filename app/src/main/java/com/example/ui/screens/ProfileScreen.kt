@@ -244,7 +244,7 @@ fun ProfileScreen(
                 loadingProgress = 0.85f
                 delay(700)
 
-                DrBenamRepository.updateProfile(
+                val result = DrBenamRepository.updateProfile(
                   firstName = firstName,
                   lastName = lastName,
                   nationalCode = nationalCode,
@@ -253,12 +253,7 @@ fun ProfileScreen(
                   email = email
                 )
                 showLoadingDialog = false
-
-                resultDialogState = Triple(
-                  true,
-                  "تغییرات ذخیره شد",
-                  "مشخصات هویتی و پرونده کاربری شما با موفقیت در سیستم مرکزی مطب ذخیره گردید."
-                )
+                resultDialogState = Triple(result.first, if (result.first) "تغییرات ذخیره شد" else "ذخیره انجام نشد", result.second)
               }
             },
             modifier = Modifier.fillMaxWidth().height(46.dp),
