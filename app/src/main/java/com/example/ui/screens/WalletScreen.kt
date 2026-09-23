@@ -75,9 +75,9 @@ fun WalletScreen(
   var showDepositDialog by remember { mutableStateOf(false) }
   var showWithdrawDialog by remember { mutableStateOf(false) }
 
-  var depositAmountText by remember { mutableStateOf("500000") }
+  var depositAmountText by remember { mutableStateOf("") }
   var withdrawAmountText by remember { mutableStateOf("") }
-  var ibanInput by remember { mutableStateOf("IR820170000000123456789012") }
+  var ibanInput by remember { mutableStateOf("") }
 
   // Multi-second progressive loading dialog
   var showLoadingDialog by remember { mutableStateOf(false) }
@@ -163,7 +163,7 @@ fun WalletScreen(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
           ) {
             Button(
-              onClick = { showDepositDialog = true },
+              onClick = { resultDialogState = Triple(false, "درگاه متصل نیست", "تا زمانی که درگاه واقعی سایت و callback آن به API متصل نشود، شارژ کیف پول انجام نمی‌شود و هیچ مبلغ ساختگی ثبت نخواهد شد.") },
               modifier = Modifier.weight(1f).height(44.dp),
               shape = RoundedCornerShape(12.dp),
               colors = ButtonDefaults.buttonColors(containerColor = DrBenamPrimary)
@@ -323,25 +323,19 @@ fun WalletScreen(
                 scope.launch {
                   showLoadingDialog = true
                   loadingTitle = "شارژ کیف پول"
-                  loadingStatus = "در حال اتصال به درگاه پرداخت شاپرک..."
+                  loadingStatus = "بررسی وضعیت درگاه پرداخت..."
                   loadingProgress = 0.30f
                   delay(900)
 
-                  loadingStatus = "تأیید تراکنش بانکی و افزایش موجودی..."
+                  loadingStatus = "درخواست به سرور سایت..."
                   loadingProgress = 0.70f
                   delay(800)
 
-                  loadingStatus = "ارسال پیامک تأیید افزایش موجودی..."
+                  loadingStatus = "دریافت پاسخ واقعی از API..."
                   loadingProgress = 0.95f
-                  DrBenamRepository.depositWallet(amt)
-                  delay(600)
+                  val result = DrBenamRepository.depositWallet(amt)
                   showLoadingDialog = false
-
-                  resultDialogState = Triple(
-                    true,
-                    "کیف پول شارژ شد",
-                    "مبلغ ${PersianFormatter.formatPrice(amt)} با موفقیت به کیف پول افزوده شد و پیامک تأیید ارسال گردید."
-                  )
+                  resultDialogState = Triple(result.first, if (result.first) "کیف پول شارژ شد" else "شارژ انجام نشد", result.second)
                 }
               }
             },
@@ -404,25 +398,19 @@ fun WalletScreen(
                 scope.launch {
                   showLoadingDialog = true
                   loadingTitle = "درخواست تسویه وجه"
-                  loadingStatus = "استعلام شماره شبا در سامانه پایا بانک مرکزی..."
+                  loadingStatus = "ارسال درخواست تسویه به سرور سایت..."
                   loadingProgress = 0.35f
                   delay(900)
 
-                  loadingStatus = "ثبت حواله بانکی در صف تسویه مطب..."
+                  loadingStatus = "ثبت تراکنش مالی در دیتابیس..."
                   loadingProgress = 0.70f
                   delay(800)
 
-                  loadingStatus = "ارسال پیامک ثبت درخواست تسویه به بیمار..."
+                  loadingStatus = "دریافت نتیجه واقعی API..."
                   loadingProgress = 0.95f
-                  DrBenamRepository.withdrawWallet(amt, ibanInput)
-                  delay(600)
+                  val result = DrBenamRepository.withdrawWallet(amt, ibanInput)
                   showLoadingDialog = false
-
-                  resultDialogState = Triple(
-                    true,
-                    "درخواست تسویه ثبت شد",
-                    "درخواست تسویه به مبلغ ${PersianFormatter.formatPrice(amt)} با موفقیت ثبت شد و پیامک تأیید ارسال گردید."
-                  )
+                  resultDialogState = Triple(result.first, if (result.first) "درخواست تسویه ثبت شد" else "تسویه انجام نشد", result.second)
                 }
               }
             },
