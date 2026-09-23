@@ -77,6 +77,99 @@ $action = trim((string)($_REQUEST['action'] ?? ''));
 
 try {
     switch ($action) {
+        case 'send_otp': {
+            $mobile = trim((string)($_POST['mobile'] ?? ''));
+            $mobile = preg_replace('/[^0-9]/', '', $mobile) ?? '';
+            if (str_starts_with($mobile, '98') && strlen($mobile) === 12) $mobile = '0' . substr($mobile, 2);
+            if (!preg_match('/^09\\d{9}$/', $mobile)) {
+                echo json_encode(['ok'=>false,'message'=>'شماره موبایل معتبر نیست.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $st = $pdo->prepare("SELECT id, name, phone FROM users WHERE phone = ? LIMIT 1");
+            $st->execute([$mobile]);
+            $user = $st->fetch();
+
+            if (!$user) {
+                $pdo->prepare("INSERT INTO users (phone, name, role, is_active, created_at) VALUES (?, 'کاربر گرامی', 'patient', 1, NOW())")
+                    ->execute([$mobile]);
+                $userId = (int)$pdo->lastInsertId();
+            } else {
+                $userId = (int)$user['id'];
+            }
+
+            $code = (string)random_int(100000, 999999);
+            $hash = password_hash($code, PASSWORD_DEFAULT);
+            $pdo->prepare("UPDATE otp_codes SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL")->execute([$userId]);
+            $pdo->prepare("INSERT INTO otp_codes (user_id, code_hash, attempts, expires_at, created_at) VALUES (?, ?, 0, DATE_ADD(NOW(), INTERVAL 2 MINUTE), NOW())")
+                ->execute([$userId, $hash]);
+
+            if (!sendMeliSms(536367, $mobile, [$code])) {
+                echo json_encode(['ok'=>false,'message'=>'ارسال پیامک کد تأیید ناموفق بود.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            echo json_encode(['ok'=>true,'message'=>'کد تأیید ارسال شد.'], JSON_UNESCAPED_UNICODE);
+            break;
+        }
+
+        case 'verify_otp': {
+            $mobile = trim((string)($_POST['mobile'] ?? ''));
+            $otp = trim((string)($_POST['otp'] ?? ''));
+            if (!preg_match('/^09\\d{9}$/', $mobile) || !preg_match('/^\\d{6}$/', $otp)) {
+                echo json_encode(['ok'=>false,'message'=>'اطلاعات ورود نامعتبر است.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $st = $pdo->prepare("SELECT u.*, o.id AS otp_id, o.code_hash, o.attempts, o.expires_at
+                                 FROM users u
+                                 INNER JOIN otp_codes o ON o.user_id = u.id
+                                 WHERE u.phone = ? AND o.used_at IS NULL
+                                 ORDER BY o.id DESC LIMIT 1");
+            $st->execute([$mobile]);
+            $row = $st->fetch();
+
+            if (!$row || strtotime((string)$row['expires_at']) < time()) {
+                echo json_encode(['ok'=>false,'message'=>'کد تأیید منقضی شده است.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ((int)$row['attempts'] >= 5) {
+                echo json_encode(['ok'=>false,'message'=>'تعداد تلاش‌های ورود بیش از حد مجاز است.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if (!password_verify($otp, (string)$row['code_hash'])) {
+                $pdo->prepare("UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?")->execute([(int)$row['otp_id']]);
+                echo json_encode(['ok'=>false,'message'=>'کد تأیید صحیح نیست.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $pdo->prepare("UPDATE otp_codes SET used_at = NOW() WHERE id = ?")->execute([(int)$row['otp_id']]);
+            if (array_key_exists('phone_verified', $row)) {
+                $pdo->prepare("UPDATE users SET phone_verified = 1 WHERE id = ?")->execute([(int)$row['id']]);
+            }
+
+            echo json_encode([
+                'ok'=>true,
+                'message'=>'ورود با موفقیت انجام شد.',
+                'user'=>[
+                    'id'=>(int)$row['id'],
+                    'name'=>(string)($row['name'] ?? ''),
+                    'first_name'=>(string)($row['first_name'] ?? ''),
+                    'last_name'=>(string)($row['last_name'] ?? ''),
+                    'phone'=>(string)$row['phone'],
+                    'email'=>(string)($row['email'] ?? ''),
+                    'national_id'=>(string)($row['national_id'] ?? ''),
+                    'birth_date'=>(string)($row['birth_date'] ?? ''),
+                    'gender'=>(string)($row['gender'] ?? ''),
+                    'avatar'=>(string)($row['avatar'] ?? ''),
+                    'wallet_balance'=>(int)($row['wallet_balance'] ?? 0)
+                ]
+            ], JSON_UNESCAPED_UNICODE);
+            break;
+        }
+
         // ۱. دریافت اطلاعات کامل برای همگام‌سازی اپلیکیشن
         case 'sync_init': {
             $mobile = trim((string)($_REQUEST['mobile'] ?? ''));
@@ -166,14 +259,23 @@ try {
 
             // پیدا کردن اسلات
             $dbTime = (strlen($time) === 5) ? $time . ':00' : $time;
-            $slotStmt = $pdo->prepare("SELECT id, schedule_id FROM time_slots WHERE slot_date = ? AND start_time = ? AND status <> 'blocked' LIMIT 1 FOR UPDATE");
+            $slotStmt = $pdo->prepare("SELECT id, schedule_id FROM time_slots WHERE slot_date = ? AND start_time = ? AND status = 'available' LIMIT 1 FOR UPDATE");
             $slotStmt->execute([$date, $dbTime]);
             $slotRow = $slotStmt->fetch();
-            $slotId = $slotRow ? (int)$slotRow['id'] : 185;
+            if (!$slotRow) {
+                $pdo->rollBack();
+                echo json_encode(['ok' => false, 'message' => 'این زمان دیگر آزاد نیست یا وجود ندارد.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $slotId = (int)$slotRow['id'];
 
-            // پر کردن اسلات
-            $updSlot = $pdo->prepare("UPDATE time_slots SET status = 'booked' WHERE id = ?");
+            $updSlot = $pdo->prepare("UPDATE time_slots SET status = 'booked' WHERE id = ? AND status = 'available'");
             $updSlot->execute([$slotId]);
+            if ($updSlot->rowCount() !== 1) {
+                $pdo->rollBack();
+                echo json_encode(['ok' => false, 'message' => 'این زمان هم‌اکنون توسط کاربر دیگری رزرو شد.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
 
             // ثبت نوبت
             $payLabel = ($payChoice === 'deposit') ? 'پرداخت بیعانه' : 'تسویه کامل آنلاین';
@@ -273,8 +375,13 @@ try {
                 $uid = (int)$u['id'];
                 $patientName = (string)($u['name'] ?? 'کاربر گرامی');
 
-                // کسر موجودی و ثبت تراکنش
-                $pdo->prepare("UPDATE users SET wallet_balance = GREATEST(0, wallet_balance - ?) WHERE id = ?")->execute([$amount, $uid]);
+                if ((int)$u['wallet_balance'] < $amount) {
+                    $pdo->rollBack();
+                    echo json_encode(['ok' => false, 'message' => 'موجودی کیف پول کافی نیست.'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+
+                $pdo->prepare("UPDATE users SET wallet_balance = wallet_balance - ? WHERE id = ?")->execute([$amount, $uid]);
 
                 $pdo->prepare("INSERT INTO wallet_transactions (user_id, amount, type, status, tracking_code, description, card_or_iban, created_at) VALUES (?, ?, 'withdraw', 'pending', ?, 'درخواست تسویه بانکی', ?, NOW())")
                     ->execute([$uid, $amount, $tracking, $iban]);
