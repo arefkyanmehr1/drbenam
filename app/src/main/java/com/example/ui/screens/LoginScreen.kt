@@ -81,12 +81,11 @@ fun LoginScreen(
   modifier: Modifier = Modifier
 ) {
   val scope = rememberCoroutineScope()
-  val activeOtpCode by DrBenamRepository.activeOtpCode.collectAsState()
 
   var authStep by remember { mutableStateOf(LoginAuthStep.MOBILE_INPUT) }
   var selectedTab by remember { mutableIntStateOf(0) } // 0: SMS OTP, 1: Password
 
-  var mobileNumber by remember { mutableStateOf("09121234567") }
+  var mobileNumber by remember { mutableStateOf("") }
   var otpCode by remember { mutableStateOf("") }
   var passwordInput by remember { mutableStateOf("") }
   var passwordVisible by remember { mutableStateOf(false) }
@@ -110,13 +109,6 @@ fun LoginScreen(
         delay(1000)
         countdownSeconds--
       }
-    }
-  }
-
-  // Auto-fill OTP when received in test mode
-  LaunchedEffect(activeOtpCode) {
-    if (activeOtpCode != null && authStep == LoginAuthStep.OTP_VERIFY) {
-      otpCode = activeOtpCode!!
     }
   }
 
@@ -495,10 +487,13 @@ fun LoginScreen(
                       loadingTitle = "ورود با رمز عبور"
                       loadingStatus = "در حال احراز هویت با دیتابیس..."
                       loadingProgress = 0.5f
-                      delay(1100)
+                      val result = DrBenamRepository.loginPassword(mobileNumber, passwordInput)
                       showLoadingDialog = false
-                      DrBenamRepository.setLoggedIn(true)
-                      onLoginSuccess()
+                      if (result.first) {
+                        onLoginSuccess()
+                      } else {
+                        resultDialogState = Triple(false, "خطا در ورود", result.second)
+                      }
                     }
                   }
                 },
