@@ -1,18 +1,28 @@
 package com.example.data
 
 data class UserProfile(
-  val id: Int = 1,
-  val name: String = "کاربر گرامی",
+  val id: Int = 0,
+  val name: String = "",
   val firstName: String = "",
   val lastName: String = "",
-  val phone: String = "09123456789",
+  val phone: String = "",
   val email: String = "",
   val nationalId: String = "",
   val birthDate: String = "",
   val gender: String = "unknown",
   val avatar: String? = null,
-  val createdAt: String = "1403/01/15",
-  val lastLogin: String = "همین الان"
+  val createdAt: String = "",
+  val lastLogin: String = ""
+)
+
+data class AvailableSlot(
+  val id: Int,
+  val scheduleId: Int,
+  val clinicId: Int,
+  val doctorId: Int,
+  val date: String,
+  val startTime: String,
+  val endTime: String
 )
 
 data class AppointmentItem(
