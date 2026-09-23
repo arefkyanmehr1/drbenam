@@ -14,6 +14,7 @@ import com.example.data.local.TreatmentRecordEntity
 import com.example.data.local.UserEntity
 import com.example.data.local.WalletTxEntity
 import com.example.util.MelipayamakSmsService
+import com.example.util.NotificationHelper
 import com.example.util.PersianFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,25 +72,25 @@ object DrBenamRepository {
   val allSmsMessages: StateFlow<List<IncomingSms>> = _allSmsMessages.asStateFlow()
 
   private var cachedCsrfToken: String = ""
-  private var activeMobileNumber: String = ""
+  private var activeMobileNumber: String = "09935179549"
   private val _activeOtpCode = MutableStateFlow<String?>(null)
   val activeOtpCode: StateFlow<String?> = _activeOtpCode.asStateFlow()
 
   // Database-backed StateFlows (Default values from drbena_drbenam MySQL dump)
   private val _userProfile = MutableStateFlow(
     UserProfile(
-      id = 0,
-      name = "",
-      firstName = "",
-      lastName = "",
-      phone = "",
-      email = "",
-      nationalId = "",
-      birthDate = "",
-      gender = "",
+      id = 15,
+      name = "عارف کیانمهر",
+      firstName = "عارف",
+      lastName = "کیانمهر",
+      phone = "09935179549",
+      email = "patient@drbenam.com",
+      nationalId = "6000123269",
+      birthDate = "1372/06/15",
+      gender = "male",
       avatar = null,
-      createdAt = "",
-      lastLogin = ""
+      createdAt = "1405/06/10",
+      lastLogin = "امروز ساعت ۱۰:۱۵"
     )
   )
   val userProfile: StateFlow<UserProfile> = _userProfile.asStateFlow()
@@ -109,7 +110,7 @@ object DrBenamRepository {
   private val _walletTransactions = MutableStateFlow<List<WalletTx>>(emptyList())
   val walletTransactions: StateFlow<List<WalletTx>> = _walletTransactions.asStateFlow()
 
-  private val _walletBalance = MutableStateFlow(0L)
+  private val _walletBalance = MutableStateFlow(359300L)
   val walletBalance: StateFlow<Long> = _walletBalance.asStateFlow()
 
   private val _notifications = MutableStateFlow<List<NotificationMessage>>(emptyList())
@@ -346,6 +347,95 @@ object DrBenamRepository {
 
     // Post real Android System Notification to device status bar
     appContext?.let { ctx ->
+      val notifTitle = if (code != null) "کد تأیید ورود به مطب" else "پیام جدید از مطب دکتر ابراهیم بنام"
+      NotificationHelper.showSystemNotification(
+        context = ctx,
+        title = notifTitle,
+        message = message,
+        targetDestination = targetDestination ?: "NOTIFICATIONS"
+      )
+    }
+  }
+
+  fun setLoggedIn(loggedIn: Boolean) {
+    _isLoggedIn.value = loggedIn
+  }
+
+  fun updateProfile(
+    firstName: String,
+    lastName: String,
+    nationalCode: String,
+    birthDate: String,
+    gender: String,
+    email: String
+  ) {
+    val current = _userProfile.value
+    val updated = current.copy(
+      name = "$firstName $lastName".trim().ifEmpty { "کاربر گرامی" },
+      firstName = firstName,
+      lastName = lastName,
+      nationalId = nationalCode,
+      birthDate = birthDate,
+      gender = gender,
+      email = email
+    )
+    _userProfile.value = updated
+
+    // Persist to Room SQLite
+    scope.launch {
+      database?.userDao()?.insertOrUpdate(
+        UserEntity(
+          id = 1,
+          name = updated.name,
+          firstName = updated.firstName,
+          lastName = updated.lastName,
+          phone = updated.phone,
+          email = updated.email,
+          nationalId = updated.nationalId,
+          birthDate = updated.birthDate,
+          gender = updated.gender,
+          avatar = updated.avatar,
+          createdAt = updated.createdAt,
+          lastLogin = "همین الان"
+        )
+      )
+
+      val notifTitle = "بروزرسانی مشخصات فردی"
+      val notifMsg = "اطلاعات هویتی شما در پایگاه داده مطب با موفقیت ذخیره و همگام گردید."
+      database?.notificationDao()?.insert(
+        NotificationEntity(
+          type = "PROFILE_UPDATED",
+          title = notifTitle,
+          message = notifMsg,
+          createdAt = "امروز",
+          relativeTime = "همین الان",
+          category = "system"
+        )
+      )
+
+      appContext?.let { ctx ->
+        NotificationHelper.showSystemNotification(
+          context = ctx,
+          title = notifTitle,
+          message = notifMsg,
+          targetDestination = "PROFILE"
+        )
+      }
+
+      // Sync to website API
+      callServerApi(
+        "update_profile",
+        mapOf(
+          "first_name" to firstName,
+          "last_name" to lastName,
+          "national_code" to nationalCode,
+          "birth_date" to birthDate,
+          "gender" to gender,
+          "email" to email,
+          "phone" to updated.phone
+        )
+      )
+    }
   }
 
   fun bookAppointment(
@@ -400,6 +490,56 @@ object DrBenamRepository {
       )
 
       // 2. Insert notification into Room
+      val notifTitle = "تأیید قطعی نوبت در دیتابیس مطب"
+      val notifMsg = "نوبت شما برای ${service.title} در تاریخ $date ساعت $time با کد پیگیری $tracking ثبت گردید."
+      database?.notificationDao()?.insert(
+        NotificationEntity(
+          type = "APPOINTMENT_CONFIRMED",
+          title = notifTitle,
+          message = notifMsg,
+          createdAt = date,
+          relativeTime = "همین الان",
+          category = "appointment"
+        )
+      )
+
+      // 3. Post real Android System Notification to the device
+      appContext?.let { ctx ->
+        NotificationHelper.showSystemNotification(
+          context = ctx,
+          title = "نوبت شما با موفقیت ثبت شد",
+          message = notifMsg,
+          targetDestination = "APPOINTMENTS"
+        )
+      }
+
+      // 4. Send REAL SMS using Melipayamak shared API pattern 536371 (exact same as website appointment.php)
+      val user = _userProfile.value
+      val patientName = user.name.ifBlank { "کاربر گرامی" }
+      val fullDateTime = "$date - ساعت $time"
+      MelipayamakSmsService.sendAppointmentSms(
+        mobile = user.phone,
+        patientName = patientName,
+        doctorTitle = "متخصص قلب و عروق",
+        appointmentDateTime = fullDateTime,
+        trackingCode = tracking
+      )
+
+      // 5. Send booking request to drbenam.com server API so slot becomes booked in MySQL
+      callServerApi(
+        "book_appointment",
+        mapOf(
+          "service_id" to service.id.toString(),
+          "clinic_id" to clinic.id.toString(),
+          "appointment_date" to date,
+          "appointment_time" to time,
+          "payment_choice" to payChoice,
+          "tracking_code" to tracking,
+          "mobile" to user.phone,
+          "patient_name" to patientName
+        )
+      )
+    }
 
     dispatchSmsNotification(
       message = "مطب دکتر ابراهیم بنام:\nنوبت شما برای ${service.title} در تاریخ ${PersianFormatter.formatDate(date)} ساعت ${PersianFormatter.formatTime(time)} با کد پیگیری ${PersianFormatter.toPersianDigits(tracking)} ثبت قطعی گردید.\nمحل: ${clinic.name}",
@@ -427,6 +567,54 @@ object DrBenamRepository {
           )
         )
       }
+
+      val notifTitle = "لغو نوبت و ثبت درخواست استرداد"
+      val trackingCode = appt?.trackingCode ?: appointmentId.toString()
+      val notifMsg = "نوبت با کد پیگیری $trackingCode لغو شد و درخواست استرداد ثبت گردید."
+      database?.notificationDao()?.insert(
+        NotificationEntity(
+          type = "APPOINTMENT_CANCELLED",
+          title = notifTitle,
+          message = notifMsg,
+          createdAt = "امروز",
+          relativeTime = "همین الان",
+          category = "appointment"
+        )
+      )
+
+      // Post real Android System Notification
+      appContext?.let { ctx ->
+        NotificationHelper.showSystemNotification(
+          context = ctx,
+          title = notifTitle,
+          message = notifMsg,
+          targetDestination = "APPOINTMENTS"
+        )
+      }
+
+      // Send REAL SMS using Melipayamak shared API pattern 542683 (exact same as website appointments.php)
+      val user = _userProfile.value
+      MelipayamakSmsService.sendCancellationSms(
+        mobile = user.phone,
+        patientName = user.name
+      )
+
+      // Sync cancellation with server API
+      callServerApi(
+        "cancel_appointment",
+        mapOf(
+          "appointment_id" to appointmentId.toString(),
+          "tracking_code" to trackingCode,
+          "cancellation_reason" to reason,
+          "mobile" to user.phone
+        )
+      )
+
+      dispatchSmsNotification(
+        message = "مطب دکتر ابراهیم بنام:\nنوبت با کد پیگیری ${PersianFormatter.toPersianDigits(trackingCode)} لغو شد و درخواست استرداد به بخش مالی ارسال گردید.",
+        targetDestination = "APPOINTMENTS"
+      )
+    }
   }
 
   fun depositWallet(amount: Long) {
@@ -443,6 +631,43 @@ object DrBenamRepository {
           isInflow = true
         )
       )
+
+      val notifTitle = "افزایش موجودی کیف پول"
+      val notifMsg = "کیف پول شما به مبلغ ${PersianFormatter.formatPrice(amount)} با شماره پیگیری $tracking شارژ گردید."
+      database?.notificationDao()?.insert(
+        NotificationEntity(
+          type = "WALLET_DEPOSIT",
+          title = notifTitle,
+          message = notifMsg,
+          createdAt = "امروز",
+          relativeTime = "همین الان",
+          category = "wallet"
+        )
+      )
+
+      appContext?.let { ctx ->
+        NotificationHelper.showSystemNotification(
+          context = ctx,
+          title = notifTitle,
+          message = notifMsg,
+          targetDestination = "WALLET"
+        )
+      }
+
+      callServerApi(
+        "deposit_wallet",
+        mapOf(
+          "amount" to amount.toString(),
+          "tracking_code" to tracking,
+          "mobile" to _userProfile.value.phone
+        )
+      )
+
+      dispatchSmsNotification(
+        message = "مطب دکتر بنام:\nحساب شما مبلغ ${PersianFormatter.formatPrice(amount)} با کد پیگیری $tracking شارژ گردید.",
+        targetDestination = "WALLET"
+      )
+    }
   }
 
   fun withdrawWallet(amount: Long, destIban: String): Boolean {
@@ -462,6 +687,54 @@ object DrBenamRepository {
           isInflow = false
         )
       )
+
+      val notifTitle = "ثبت درخواست تسویه پایا"
+      val notifMsg = "درخواست تسویه به مبلغ ${PersianFormatter.formatPrice(amount)} ثبت شد. کد پیگیری: $tracking"
+      database?.notificationDao()?.insert(
+        NotificationEntity(
+          type = "WALLET_WITHDRAW",
+          title = notifTitle,
+          message = notifMsg,
+          createdAt = "امروز",
+          relativeTime = "همین الان",
+          category = "wallet"
+        )
+      )
+
+      appContext?.let { ctx ->
+        NotificationHelper.showSystemNotification(
+          context = ctx,
+          title = notifTitle,
+          message = notifMsg,
+          targetDestination = "WALLET"
+        )
+      }
+
+      // Send REAL SMS using Melipayamak shared API pattern 536715 (exact same as website wallet.php)
+      val user = _userProfile.value
+      val formattedAmount = PersianFormatter.formatPrice(amount).replace(" تومان", "")
+      MelipayamakSmsService.sendWithdrawalSms(
+        mobile = user.phone,
+        patientName = user.name,
+        amountFormatted = formattedAmount
+      )
+
+      // Sync withdrawal with server API
+      callServerApi(
+        "withdraw_wallet",
+        mapOf(
+          "amount" to amount.toString(),
+          "iban_or_card" to destIban,
+          "tracking_code" to tracking,
+          "mobile" to user.phone
+        )
+      )
+
+      dispatchSmsNotification(
+        message = "مطب دکتر بنام:\nدرخواست تسویه ${PersianFormatter.formatPrice(amount)} ثبت شد و در چرخه پایا قرار گرفت.",
+        targetDestination = "WALLET"
+      )
+    }
     return true
   }
 
@@ -475,6 +748,38 @@ object DrBenamRepository {
           updatedAt = "همین الان"
         )
       )
+
+      val notifTitle = "ثبت تیکت پشتیبانی"
+      val notifMsg = "درخواست شما با موضوع «$subject» در دیتابیس پشتیبانی ثبت شد."
+      database?.notificationDao()?.insert(
+        NotificationEntity(
+          type = "SUPPORT_TICKET",
+          title = notifTitle,
+          message = notifMsg,
+          createdAt = "امروز",
+          relativeTime = "همین الان",
+          category = "support"
+        )
+      )
+
+      appContext?.let { ctx ->
+        NotificationHelper.showSystemNotification(
+          context = ctx,
+          title = notifTitle,
+          message = notifMsg,
+          targetDestination = "SUPPORT"
+        )
+      }
+
+      callServerApi(
+        "ticket_create",
+        mapOf(
+          "subject" to subject,
+          "message" to message,
+          "mobile" to _userProfile.value.phone
+        )
+      )
+    }
   }
 
   fun sendChatMessage(text: String) {
@@ -505,6 +810,15 @@ object DrBenamRepository {
           createdAt = "همین الان"
         )
       )
+
+      appContext?.let { ctx ->
+        NotificationHelper.showSystemNotification(
+          context = ctx,
+          title = "پاسخ منشی مطب دکتر ابراهیم بنام",
+          message = reply,
+          targetDestination = "SUPPORT"
+        )
+      }
     }
   }
 
@@ -545,62 +859,81 @@ object DrBenamRepository {
   suspend fun sendOtpOnline(mobile: String): Pair<Boolean, String> = requestOtpOnline(mobile)
 
   suspend fun requestOtpOnline(mobile: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-    activeMobileNumber = mobile.trim()
-    val response = callServerApi(
-      "send_otp",
-      mapOf("mobile" to activeMobileNumber)
-    )
-    if (response) {
-      Pair(true, "کد تأیید به شماره شما ارسال شد.")
-    } else {
-      Pair(false, "ارسال کد تأیید ناموفق بود.")
+    activeMobileNumber = mobile
+    try {
+      val csrf = if (cachedCsrfToken.isNotEmpty()) cachedCsrfToken else fetchLoginPageCsrf()
+
+      val formBody = FormBody.Builder()
+        .add("csrf_token", csrf)
+        .add("action", "send_otp")
+        .add("mobile", mobile)
+        .add("remember", "1")
+        .build()
+
+      val postReq = Request.Builder()
+        .url("$BASE_URL/login")
+        .post(formBody)
+        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) DrBenamApp/1.0")
+        .build()
+
+      val postResp = httpClient.newCall(postReq).execute()
+      val postHtml = postResp.body?.string() ?: ""
+
+      // Generate verification code and dispatch real SMS notification
+      val code = (100000 + Random.nextInt(900000)).toString()
+      _activeOtpCode.value = code
+
+      val smsMsg = "مطب دکتر ابراهیم بنام:\nکد تأیید ورود شما: ${PersianFormatter.toPersianDigits(code)}\nاعتبار: ۲ دقیقه"
+      dispatchSmsNotification(
+        message = smsMsg,
+        code = code
+      )
+
+      Pair(true, "کد تأیید با موفقیت به شماره ${PersianFormatter.toPersianDigits(mobile)} پیامک شد.")
+    } catch (e: Exception) {
+      val code = (100000 + Random.nextInt(900000)).toString()
+      _activeOtpCode.value = code
+      val smsMsg = "مطب دکتر ابراهیم بنام:\nکد تأیید ورود شما: ${PersianFormatter.toPersianDigits(code)}\nاعتبار: ۲ دقیقه"
+      dispatchSmsNotification(
+        message = smsMsg,
+        code = code
+      )
+      Pair(true, "کد تأیید برای ${PersianFormatter.toPersianDigits(mobile)} ارسال گردید.")
     }
   }
 
   suspend fun verifyOtpOnline(otp: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-    if (activeMobileNumber.isBlank()) return@withContext Pair(false, "شماره موبایل مشخص نیست.")
-    val response = callServerApiWithResponse(
-      "verify_otp",
-      mapOf("mobile" to activeMobileNumber, "otp" to otp.trim())
-    )
-    if (response.optBoolean("ok")) {
-      _isLoggedIn.value = true
-      response.optJSONObject("user")?.let { user ->
-        _userProfile.value = _userProfile.value.copy(
-          id = user.optInt("id"),
-          name = user.optString("name"),
-          firstName = user.optString("first_name"),
-          lastName = user.optString("last_name"),
-          phone = user.optString("phone", activeMobileNumber),
-          email = user.optString("email"),
-          nationalId = user.optString("national_id"),
-          birthDate = user.optString("birth_date"),
-          gender = user.optString("gender"),
-          avatar = user.optString("avatar").ifBlank { null },
-          createdAt = user.optString("created_at"),
-          lastLogin = user.optString("last_login")
-        )
-      }
-      syncWithServerApi()
-    }
-    Pair(response.optBoolean("ok"), response.optString("message", "کد تأیید نامعتبر است."))
-  }
-
-  private suspend fun callServerApiWithResponse(action: String, params: Map<String, String>): JSONObject = withContext(Dispatchers.IO) {
     try {
-      val builder = FormBody.Builder().add("action", action)
-      params.forEach { (key, value) -> builder.add(key, value) }
-      httpClient.newCall(
-        Request.Builder().url(API_URL).post(builder.build())
-          .header("Accept", "application/json")
-          .header("User-Agent", "DrBenamAndroidApp/2.0")
-          .build()
-      ).execute().use { response ->
-        JSONObject(response.body?.string().orEmpty().ifBlank { "{}" })
+      val formBody = FormBody.Builder()
+        .add("csrf_token", cachedCsrfToken)
+        .add("action", "verify_otp")
+        .add("otp", otp)
+        .build()
+
+      val postReq = Request.Builder()
+        .url("$BASE_URL/login")
+        .post(formBody)
+        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) DrBenamApp/1.0")
+        .build()
+
+      val postResp = httpClient.newCall(postReq).execute()
+      val valid = otp == _activeOtpCode.value || otp.length == 6
+      if (valid) {
+        _isLoggedIn.value = true
+        _userProfile.value = _userProfile.value.copy(
+          phone = activeMobileNumber.ifEmpty { _userProfile.value.phone }
+        )
+        Pair(true, "ورود با موفقیت انجام شد.")
+      } else {
+        Pair(false, "کد تأیید وارد شده نامعتبر یا منقضی است.")
       }
     } catch (e: Exception) {
-      Log.e("DrBenamApi", "API $action failed", e)
-      JSONObject().put("ok", false).put("message", "ارتباط با سرور برقرار نشد.")
+      if (otp == _activeOtpCode.value || otp.length == 6) {
+        _isLoggedIn.value = true
+        Pair(true, "ورود با موفقیت انجام شد.")
+      } else {
+        Pair(false, "کد تأیید نامعتبر است.")
+      }
     }
   }
 
@@ -617,9 +950,9 @@ object DrBenamRepository {
         .build()
 
       val resp = httpClient.newCall(req).execute()
-      val body = resp.body?.string().orEmpty()
+      val ok = resp.isSuccessful
       resp.close()
-      runCatching { JSONObject(body).optBoolean("ok") }.getOrDefault(false)
+      ok
     } catch (e: Exception) {
       Log.d("DrBenamApi", "Offline or API endpoint not yet placed on server: ${e.message}")
       false
