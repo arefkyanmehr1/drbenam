@@ -1,16 +1,11 @@
 package com.example
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
@@ -29,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.core.content.ContextCompat
 import com.example.data.DrBenamRepository
 import com.example.ui.components.AppNavDestination
 import com.example.ui.components.DrBenamBottomBar
@@ -44,7 +38,6 @@ import com.example.ui.screens.SupportScreen
 import com.example.ui.screens.TreatmentsScreen
 import com.example.ui.screens.WalletScreen
 import com.example.ui.theme.MyApplicationTheme
-import com.example.util.NotificationHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
@@ -54,8 +47,7 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
 
-    // Initialize notification channels and Room database repository
-    NotificationHelper.createNotificationChannel(applicationContext)
+    // Initialize the server-authoritative repository.
     DrBenamRepository.init(applicationContext)
 
     intent?.getStringExtra("NAV_DESTINATION")?.let { target ->
@@ -96,27 +88,6 @@ fun DrBenamApp(
   val unreadNotifs = notifications.count { !it.isRead }
 
   var currentDestination by remember { mutableStateOf(AppNavDestination.DASHBOARD) }
-
-  // Runtime Permission request for Android 13+ (POST_NOTIFICATIONS)
-  val permissionLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.RequestPermission()
-  ) { isGranted ->
-    if (isGranted) {
-      // Permission granted - system notifications will appear on device
-    }
-  }
-
-  LaunchedEffect(Unit) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      if (ContextCompat.checkSelfPermission(
-          context,
-          Manifest.permission.POST_NOTIFICATIONS
-        ) != PackageManager.PERMISSION_GRANTED
-      ) {
-        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-      }
-    }
-  }
 
   // Handle incoming notification navigation
   LaunchedEffect(pendingDest) {
