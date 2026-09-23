@@ -677,8 +677,8 @@ private fun SuccessReceiptCard(
 
       Spacer(modifier = Modifier.height(14.dp))
 
-      Text("نوبت شما با موفقیت ثبت قطعی شد", fontWeight = FontWeight.Black, fontSize = 16.sp, color = Color(0xFF065F46))
-      Text("پیامک تأیید حاوی کد پیگیری به شماره موبایل شما ارسال گردید.", fontSize = 11.sp, color = Color(0xFF64748B))
+      Text("درخواست نوبت شما ثبت شد", fontWeight = FontWeight.Black, fontSize = 16.sp, color = Color(0xFF065F46))
+      Text("درخواست در دیتابیس سایت ثبت شده و پس از تأیید مطب، وضعیت آن به‌روزرسانی می‌شود.", fontSize = 11.sp, color = Color(0xFF64748B))
 
       Spacer(modifier = Modifier.height(14.dp))
 
@@ -706,7 +706,7 @@ private fun SuccessReceiptCard(
         shape = RoundedCornerShape(12.dp),
         colors = ButtonDefaults.buttonColors(containerColor = DrBenamPrimary)
       ) {
-        Text("مشاهده در لیست نوبت‌های من", fontWeight = FontWeight.Bold)
+        Text("مشاهده در نوبت‌های من", fontWeight = FontWeight.Bold)
       }
 
       Spacer(modifier = Modifier.height(8.dp))
